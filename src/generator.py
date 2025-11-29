@@ -1,6 +1,7 @@
 import os
 import random
 import sys
+import argparse
 
 from moviepy import (
     VideoFileClip,
@@ -144,23 +145,42 @@ def generate_multiple(count):
         log(f"--- Generating clip {i+1}/{count} ---")
         generate_short()
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Psychedelic Shorts Auto-Generator (GPU edition)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="How many shorts to generate."
+    )
+
+    parser.add_argument(
+        "--preview-effects",
+        action="store_true",
+        help="Generate a preview sample for every video effect."
+    )
+
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Disable audio processing (video-only output)."
+    )
+
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
+    args = parse_args()
 
-    if "--preview-effects" in args:
+    if args.preview_effects:
         generate_effect_previews()
-        sys.exit(0)
-
-    if "--count" in args:
-        idx = args.index("--count") + 1
-        if idx < len(args):
-            count = int(args[idx])
-            generate_multiple(count)
-            sys.exit(0)
-        else:
-            log("ERROR: missing number after --count")
-            sys.exit(1)
-
-    generate_short()
+    else:
+        for _ in range(args.count):
+            generate_short(disable_audio=args.no_audio)
 
