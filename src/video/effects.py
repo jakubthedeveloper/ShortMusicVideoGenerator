@@ -2,7 +2,6 @@ import numpy as np
 import cupy as cp
 import cv2
 
-
 # ---- GPU helpers ----
 
 def np_to_cp(arr):

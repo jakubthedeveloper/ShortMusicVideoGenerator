@@ -3,6 +3,7 @@ import random
 import sys
 import argparse
 from utils.title_utils import generate_title_from_audio
+from video.effect_chains import random_chain
 
 from moviepy import (
     VideoFileClip,
@@ -24,7 +25,6 @@ from audio.exporter import save_temp_audio
 
 from config.settings import CLIP_MIN_DURATION, CLIP_MAX_DURATION, FPS
 
-
 def generate_short():
     # -----------------------------
     # SELECT INPUTS
@@ -43,10 +43,26 @@ def generate_short():
     # -----------------------------
     clip = VideoFileClip(video_path)
 
-    duration = random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
-    start = random.uniform(0, max(0, clip.duration - duration))
+    # -----------------------------
+    # SAFE RANDOM SUBCLIP SELECTION
+    # -----------------------------
+    video_duration = clip.duration
 
-    # MOVIEPY 2.x
+    # pick random duration inside allowed range
+    duration = random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
+
+    # clamp duration if video is shorter
+    duration = min(duration, video_duration - 0.1)
+
+    # if video is extremely short: use entire clip
+    if duration <= 0:
+        duration = video_duration
+
+    # valid start time
+    max_start = max(0, video_duration - duration)
+    start = random.uniform(0, max_start)
+
+    # MOVIEPY 2.x: subclipped()
     subclip = clip.subclipped(start, start + duration)
 
     # -----------------------------
@@ -58,8 +74,10 @@ def generate_short():
     # -----------------------------
     # SELECT EFFECT
     # -----------------------------
-    effect_fn = random.choice(VIDEO_EFFECTS)
-    log(f"Selected effect: {effect_fn.__name__}")
+    #effect_fn = random.choice(VIDEO_EFFECTS)
+    chain = random_chain()
+    chain_names = " → ".join(fn.__name__ for fn in chain)
+    log(f"Selected effect chain: {chain_names}")
 
     # -----------------------------
     # PROCESS VIDEO FRAMES
@@ -73,9 +91,9 @@ def generate_short():
         bass = bass_energy[min(i, len(bass_energy)-1)]
         hihat = hihat_energy[min(i, len(hihat_energy)-1)]
 
-        processed = apply_video_effect(
-            frame, t, beats, bass, hihat, effect_fn
-        )
+#        processed = apply_video_effect(frame, t, beats, bass, hihat, effect_fn)
+        processed = apply_video_effect(frame, t, beats, bass, hihat, chain)
+
         frames.append(processed)
 
     video = ImageSequenceClip(frames, fps=FPS)
@@ -99,10 +117,8 @@ def generate_short():
     # -----------------------------
     os.makedirs("output", exist_ok=True)
 
-    output_name = f"{title}"
-
-#    out_path = f"output/short_{random.randint(1000,9999)}.mp4"
-    out_path = f"output/{output_name} - short.mp4"
+    safe_title = title.replace("/", "-").replace("\\", "-").replace(":", " ").strip()
+    out_path = f"output/{safe_title} - short.mp4"
 
     log(f"Exporting: {out_path}")
 
