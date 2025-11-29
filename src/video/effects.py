@@ -193,30 +193,150 @@ def ripple(frame, t, beats, bass, hihat):
 # ----------------------------------------------------------------------
 # 10. KALEIDOSCOPE (GPU + CPU remap)
 # ----------------------------------------------------------------------
-def kaleidoscope(frame, t, beats, bass, hihat):
-    f_gpu = np_to_cp(frame)
+def kaleidoscope_mirrored(frame, t, beats, bass, hihat, segments=6):
     h, w = frame.shape[:2]
+    cx, cy = w // 2, h // 2
+    radius = min(cx, cy)
 
-    y, x = cp.indices((h, w))
+    output = np.zeros_like(frame)
+    step = 360 / segments
+
+    yy, xx = np.indices((h, w))
+    x = xx - cx
+    y = yy - cy
+
+    angle = (np.degrees(np.arctan2(y, x)) + 360) % 360
+    dist = np.sqrt(x*x + y*y)
+    mask = dist < radius
+
+    for i in range(segments):
+        start_angle = i * step
+        end_angle = start_angle + step
+
+        wedge_mask = (angle >= start_angle) & (angle < end_angle) & mask
+        if not np.any(wedge_mask):
+            continue
+
+        M = cv2.getRotationMatrix2D((cx, cy), -start_angle, 1.0)
+        rotated = cv2.warpAffine(frame, M, (w, h))
+
+        if i % 2 == 1:
+            rotated = cv2.flip(rotated, 1)
+
+        output[wedge_mask] = rotated[wedge_mask]
+
+    return output
+
+def kaleidoscope_dynamic(frame, t, beats, bass, hihat):
+    # dynamic segment count 5 ↔ 14
+    segments = int(5 + bass * 6 + hihat * 3)
+    segments = max(3, min(segments, 18))
+    return kaleidoscope_mirrored(frame, t, beats, bass, hihat, segments)
+
+def kaleidoscope_liquid(frame, t, beats, bass, hihat):
+    h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
 
-    dx = x - cx
-    dy = y - cy
-    angle = cp.arctan2(dy, dx)
-    radius = cp.sqrt(dx*dx + dy*dy)
+    # Distortion strength reacts to bass
+    strength = 0.005 + bass * 0.02
+    
+    yy, xx = np.indices((h, w))
+    dx = xx - cx
+    dy = yy - cy
 
-    angle = (angle + cp.pi) % (cp.pi/3)
-    angle = angle - cp.pi
+    # radial wave
+    r = np.sqrt(dx*dx + dy*dy)
+    wave = np.sin(r * 0.03 + t * 3) * strength * r
 
-    map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
-    map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
+    map_x = (xx + dx * wave).astype(np.float32)
+    map_y = (yy + dy * wave).astype(np.float32)
 
-    return cv2.remap(
-        cp_to_np(f_gpu),
-        cp_to_np(map_x),
-        cp_to_np(map_y),
-        cv2.INTER_LINEAR
+    warped = cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return kaleidoscope_mirrored(warped, t, beats, bass, hihat, segments=8)
+
+def kaleidoscope_3d(frame, t, beats, bass, hihat):
+    h, w = frame.shape[:2]
+    cx, cy = w // 2, h // 2
+
+    # curvature reacts to bass
+    k = 0.00015 + bass * 0.0004
+
+    yy, xx = np.indices((h, w))
+    dx = xx - cx
+    dy = yy - cy
+    r2 = dx*dx + dy*dy
+
+    # distortion factor
+    factor = 1 + k * r2
+    map_x = (dx / factor + cx).astype(np.float32)
+    map_y = (dy / factor + cy).astype(np.float32)
+
+    curved = cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return kaleidoscope_mirrored(curved, t, beats, bass, hihat, segments=10)
+
+def kaleidoscope_fractal(frame, t, beats, bass, hihat):
+    h, w = frame.shape[:2]
+    cx, cy = w // 2, h // 2
+
+    # fractal zoom speed
+    zoom = 1 + 0.03 * np.sin(t * 1.5 + bass * 5)
+
+    M = cv2.getRotationMatrix2D((cx, cy), t * 20, zoom)
+    rotated = cv2.warpAffine(frame, M, (w, h))
+
+    # fractal layering
+    blend = cv2.addWeighted(frame, 0.5, rotated, 0.5, 0)
+    return kaleidoscope_mirrored(blend, t, beats, bass, hihat, segments=12)
+
+
+# ======================================================================
+# KALEIDOSCOPES – GPU versions (PyTorch CUDA)
+# ======================================================================
+
+# Import CUDA kaleidoscopes
+try:
+    from video.gpu.kaleidoscope_cuda import (
+        kaleidoscope_mirrored_cuda,
+        kaleidoscope_dynamic_cuda,
+        kaleidoscope_liquid_cuda,
+        kaleidoscope_3d_cuda,
+        kaleidoscope_fractal_cuda,
     )
+    USE_KALEIDOSCOPE_CUDA = True
+except Exception as e:
+    print("[WARNING] CUDA kaleidoscopes unavailable:", e)
+    USE_KALEIDOSCOPE_CUDA = False
+
+
+# Wrappers: Auto-select CUDA or CPU
+def kaleidoscope_mirrored_auto(frame, t, beats, bass, hihat):
+    if USE_KALEIDOSCOPE_CUDA:
+        return kaleidoscope_mirrored_cuda(frame, t, beats, bass, hihat)
+    return kaleidoscope_mirrored(frame, t, beats, bass, hihat)
+
+
+def kaleidoscope_dynamic_auto(frame, t, beats, bass, hihat):
+    if USE_KALEIDOSCOPE_CUDA:
+        return kaleidoscope_dynamic_cuda(frame, t, beats, bass, hihat)
+    return kaleidoscope_dynamic(frame, t, beats, bass, hihat)
+
+
+def kaleidoscope_liquid_auto(frame, t, beats, bass, hihat):
+    if USE_KALEIDOSCOPE_CUDA:
+        return kaleidoscope_liquid_cuda(frame, t, beats, bass, hihat)
+    return kaleidoscope_liquid(frame, t, beats, bass, hihat)
+
+
+def kaleidoscope_3d_auto(frame, t, beats, bass, hihat):
+    if USE_KALEIDOSCOPE_CUDA:
+        return kaleidoscope_3d_cuda(frame, t, beats, bass, hihat)
+    return kaleidoscope_3d(frame, t, beats, bass, hihat)
+
+
+def kaleidoscope_fractal_auto(frame, t, beats, bass, hihat):
+    if USE_KALEIDOSCOPE_CUDA:
+        return kaleidoscope_fractal_cuda(frame, t, beats, bass, hihat)
+    return kaleidoscope_fractal(frame, t, beats, bass, hihat)
 
 
 # ----------------------------------------------------------------------
@@ -415,6 +535,14 @@ def bass_distort(frame, t, beats, bass, hihat):
 # ======================================================================
 
 VIDEO_EFFECTS = [
+    # fully CUDA-accelerated kaleidoscopes
+    kaleidoscope_mirrored_auto,
+    kaleidoscope_dynamic_auto,
+    kaleidoscope_liquid_auto,
+    kaleidoscope_3d_auto,
+    kaleidoscope_fractal_auto,
+
+    # your GPU / CuPy effects
     hue_shift,
     neon_pulse,
     solarize,
@@ -424,7 +552,6 @@ VIDEO_EFFECTS = [
     swirl,
     wave,
     ripple,
-    kaleidoscope,
     mandala_twist,
     pixel_sort,
     pixel_sort_vertical,
