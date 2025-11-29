@@ -1,168 +1,175 @@
-# 🎥 Music Short Videos Auto-Generator (with GPU S)
+# Music Short Videos Auto‑Generator (GPU-ready)
 
-Automated generator of YouTube Shorts from your own videos and music.
-Creates short vertical (9:16) clips with dynamic psychedelic, glitch, kaleidoscope,
-and beat‑reactive GPU‑accelerated effects, synchronized to your audio (bass, hihat, beats).
-Audio is enhanced with reverse‑reverb intros and long cinematic tails.
+A fully automated YouTube Shorts generator that creates psychedelic, beat‑reactive visual clips using:
+- Random video sources
+- Random effect chains (multi‑effect pipelines)
+- Intelligent audio title extraction
+- Reverse reverb intro & reverb tail outro
+- Automatic mastering (normalization + limiter)
+- GPU-ready architecture (optional)
+- Customizable render options
 
----
-
-## ✨ Features
-
-### 🎬 Video (GPU-Accelerated)
-Over **20+ GPU-powered effects** using **CuPy** for massive speedups:
-
-- glitch, RGB split, block glitch
-- kaleidoscope, mandala twist
-- swirl, ripple, wave
-- pixel sorting (H/V)
-- hue shift, neon pulse, solarize
-- beat reactive: zoom, ripple, glow, RGB shake
-- bass reactive: distortions, zoom pulses
-
-All heavy math (sinus warps, distortions, sorting, matrices)
-is now executed on **GPU**, giving **20×–300× faster rendering** than CPU.
-
-### 🎧 Audio (High-Quality DSP)
-- Beat detection via librosa  
-- Bass + hihat band detection  
-- Reverse-reverb intro  
-- Reverb tail outro  
-- Stereo DSP via Pedalboard  
-
-### 🎛 Automation
-- Random video + music selection
-- Multi‑short rendering: `--count N`
-- Effect preview mode: `--preview-effects`
-- All temp files handled automatically
+The generator:
+1. Picks a random video from `input/videos/`
+2. Picks a random audio track from `input/music/`
+3. Extracts the title from metadata (fallback: cleaned filename)
+4. Generates a random chain of 2–4 visual effects
+5. Applies beat‑reactive video warping
+6. Applies reverse‑reverb audio effects
+7. Normalizes and limits audio to avoid clipping
+8. Exports a vertical 9:16 Short with synced audio
 
 ---
 
-## 📁 Project Structure
+# 📁 Directory Structure
 
-project_root/
 ```
-├── src/
-│   ├── generator.py
-│   ├── video/
-│   │   ├── effects.py        # GPU/CuPy effects
-│   │   ├── renderer.py
-│   │   └── transforms.py
-│   ├── audio/
-│   │   ├── loader.py
-│   │   ├── analysis.py
-│   │   ├── effects.py
-│   │   └── exporter.py
-│   ├── utils/
-│   │   ├── file_utils.py
-│   │   └── logging_utils.py
-│   └── config/
-│       ├── settings.py
-│       └── presets.py (optional)
+project/
 │
 ├── input/
-│   ├── videos/
-│   └── music/
+│   ├── videos/      # Source videos (mp4/mov)
+│   └── music/       # Source audio (mp3/wav)
+│
 ├── output/
-│   ├── short_XXXX.mp4
+│   ├── *.mp4        # Generated Shorts
 │   └── effects_preview/
-├── temp/
-├── README.md
-└── requirements.txt
+│
+├── temp/            # Temporary audio files
+└── src/
+    ├── generator.py
+    ├── config/
+    │   └── settings.py
+    ├── utils/
+    │   ├── file_utils.py
+    │   ├── logging_utils.py
+    │   └── title_utils.py
+    ├── video/
+    │   ├── effects.py
+    │   ├── effect_chains.py
+    │   ├── renderer.py
+    │   └── transforms.py
+    └── audio/
+        ├── loader.py
+        ├── analysis.py
+        ├── effects.py
+        └── exporter.py
 ```
 
 ---
 
-## 🔧 Installation (Ubuntu)
+# ⚙️ Installation (Ubuntu / Linux)
 
-### 1. System packages
-```
-sudo apt update
-sudo apt install ffmpeg python3.12-venv python3-dev build-essential libsndfile1
-```
-
-### 2. Virtual environment
 ```
 python3 -m venv venv
 source venv/bin/activate
-```
-
-### 3. Install Python dependencies
-```
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. Install CuPy (GPU support)
+To check MoviePy 2.x installation:
 
-Check CUDA:
 ```
-nvidia-smi
-```
-
-Install:
-```
-# CUDA 12.x
-pip install cupy-cuda12x
-# CUDA 11.x
-pip install cupy-cuda11x
-```
-
-Verify:
-```
-python -c "import cupy as cp; print(cp.ones(5)*2)"
+python3 -c "import moviepy; print(moviepy.__version__)"
 ```
 
 ---
 
-## ▶️ Usage
+# ▶️ Running the Generator
 
-### Generate one short
+## Generate 1 Short:
 ```
 python src/generator.py
 ```
 
-### Generate multiple shorts
+## Generate multiple Shorts:
 ```
-python src/generator.py --count 10
+python src/generator.py --count 5
 ```
 
-### Generate all effect previews
+## Generate previews of all effects:
 ```
 python src/generator.py --preview-effects
 ```
 
-Previews go to:
+---
+
+# 🎨 Visual Effect Chains
+
+Every generated Short uses **random chains of 2–4 effects**, such as:
+
 ```
-output/effects_preview/
+kaleidoscope → distort → rgb_vibration
+ripple → block_glitch
+mandala → feedback → chroma_shift → distort
+```
+
+Effects respond to:
+- bass energy
+- hihat energy
+- beat timestamps
+- time parameter `t`
+
+You can add your own effects in `src/video/effects.py`.
+
+---
+
+# 🎧 Audio Pipeline
+
+The audio is processed through:
+
+1. Reverse reverb intro  
+2. Reverb tail outro  
+3. Normalization  
+4. Soft limiter (prevents clipping)  
+5. Final gain normalization  
+
+This ensures Shorts never get distorted.
+
+---
+
+# 🧠 Title Auto‑Generation
+
+Using `mutagen`, the title is extracted from audio metadata:
+
+- MP3 ID3  
+- FLAC tags  
+- M4A atoms  
+
+If unavailable, filename is cleaned:
+
+```
+"03. My Song (final master).mp3" → "My Song"
+```
+
+This title becomes the output filename and can be used for YouTube uploads.
+
+---
+
+# 🎬 Video Formatting
+
+Final Shorts are exported as:
+
+- 1080×1920 (vertical)
+- 60 FPS
+- H.264, AAC audio
+- Perfect YouTube Shorts compatibility
+
+---
+
+# 📦 Command Line Options
+
+```
+python src/generator.py --help
+```
+
+Outputs:
+
+```
+--count N             Generate N shorts
+--preview-effects     Export one preview clip per effect
 ```
 
 ---
 
-## 🧩 Add Your Own Effects
-
-Create a function in:
-
-```
-src/video/effects.py
-```
-
-Example:
-```
-def my_effect(frame, t, beats, bass, hihat):
-    ...
-```
-
-Register it in:
-```
-VIDEO_EFFECTS = [..., my_effect]
-```
-
-You can use:
-- CuPy for GPU operations  
-- NumPy + OpenCV for CPU operations  
-
----
-
-## 📝 License
-
-Free for personal and commercial use.
+# Author
+Jakub Krysakowski with great support from the artificial helper.
