@@ -166,12 +166,6 @@ def parse_args():
         help="Generate a preview sample for every video effect."
     )
 
-    parser.add_argument(
-        "--no-audio",
-        action="store_true",
-        help="Disable audio processing (video-only output)."
-    )
-
     return parser.parse_args()
 
 
@@ -182,5 +176,5 @@ if __name__ == "__main__":
         generate_effect_previews()
     else:
         for _ in range(args.count):
-            generate_short(disable_audio=args.no_audio)
+            generate_short()
 
