@@ -1,7 +1,12 @@
 import os
 import random
 import sys
-from moviepy.editor import ImageSequenceClip, VideoFileClip, AudioFileClip
+
+from moviepy import (
+    VideoFileClip,
+    AudioFileClip,
+    ImageSequenceClip
+)
 
 from utils.file_utils import pick_random_file
 from utils.logging_utils import log
@@ -18,97 +23,113 @@ from audio.exporter import save_temp_audio
 from config.settings import CLIP_MIN_DURATION, CLIP_MAX_DURATION, FPS
 
 
-# -------------------------------------------------------
-# Main clip generator
-# -------------------------------------------------------
 def generate_short():
-
-    # -------- PICK INPUT FILES ----------
+    # -----------------------------
+    # SELECT INPUTS
+    # -----------------------------
     video_path = pick_random_file("input/videos", ("mp4", "mov"))
     music_path = pick_random_file("input/music", ("mp3", "wav"))
 
     log(f"Selected video: {video_path}")
     log(f"Selected audio: {music_path}")
 
-    # -------- LOAD VIDEO ----------
+    # -----------------------------
+    # LOAD VIDEO
+    # -----------------------------
     clip = VideoFileClip(video_path)
 
     duration = random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
     start = random.uniform(0, max(0, clip.duration - duration))
-    subclip = clip.subclip(start, start + duration)
 
-    # -------- AUDIO ANALYSIS ----------
+    # MOVIEPY 2.x
+    subclip = clip.subclipped(start, start + duration)
+
+    # -----------------------------
+    # AUDIO ANALYSIS
+    # -----------------------------
     beats = detect_beats(music_path)
     bass_energy, hihat_energy = get_audio_bands(music_path, fps=FPS)
 
-    # -------- SELECT VIDEO EFFECT ----------
+    # -----------------------------
+    # SELECT EFFECT
+    # -----------------------------
     effect_fn = random.choice(VIDEO_EFFECTS)
     log(f"Selected effect: {effect_fn.__name__}")
 
-    # -------- PROCESS VIDEO FRAMES ----------
+    # -----------------------------
+    # PROCESS VIDEO FRAMES
+    # -----------------------------
     frames = []
-    frame_count = int(subclip.duration * FPS)
+    total_frames = int(subclip.duration * FPS)
 
     for i, frame in enumerate(subclip.iter_frames(fps=FPS)):
         t = i / FPS
+
         bass = bass_energy[min(i, len(bass_energy)-1)]
         hihat = hihat_energy[min(i, len(hihat_energy)-1)]
-        processed = apply_video_effect(frame, t, beats, bass, hihat, effect_fn)
+
+        processed = apply_video_effect(
+            frame, t, beats, bass, hihat, effect_fn
+        )
         frames.append(processed)
 
     video = ImageSequenceClip(frames, fps=FPS)
     video = to_vertical_9_16(video)
 
-    # -------- PROCESS AUDIO ----------
+    # -----------------------------
+    # PROCESS AUDIO
+    # -----------------------------
     audio = load_audio(music_path)
     audio = apply_audio_effects(audio)
     temp_audio_path = save_temp_audio(audio)
 
     audio_clip = AudioFileClip(temp_audio_path)
+    audio_clip = audio_clip.subclipped(0, video.duration)
 
-    # Trim audio to match video
-    audio_clip = audio_clip.subclip(0, video.duration)
-    video = video.set_audio(audio_clip)
+    # MOVIEPY 2.x: with_audio()
+    video = video.with_audio(audio_clip)
 
-    # -------- EXPORT ----------
+    # -----------------------------
+    # EXPORT
+    # -----------------------------
     os.makedirs("output", exist_ok=True)
-    out_name = f"output/short_{random.randint(1000,9999)}.mp4"
 
-    log(f"Exporting: {out_name}")
+    out_path = f"output/short_{random.randint(1000,9999)}.mp4"
+    log(f"Exporting: {out_path}")
 
     video.write_videofile(
-        out_name,
+        out_path,
         fps=FPS,
         codec="libx264",
-        audio_codec="aac"
+        audio_codec="aac",
     )
 
     log("Generation complete.")
 
 
-# -------------------------------------------------------
-# Generate previews for all effects
-# -------------------------------------------------------
 def generate_effect_previews():
     os.makedirs("output/effects_preview", exist_ok=True)
 
-    video_path = pick_random_file("input/videos", ("mp4","mov"))
+    video_path = pick_random_file("input/videos", ("mp4", "mov"))
     log(f"Preview source video: {video_path}")
 
     clip = VideoFileClip(video_path)
-    subclip = clip.subclip(0, min(3, clip.duration))
+    subclip = clip.subclipped(0, min(3, clip.duration))
 
+    fps_list = int(subclip.duration * FPS)
     beats = []
-    bass = [0.5] * int(subclip.duration * FPS)
-    hihat = [0.5] * int(subclip.duration * FPS)
+    bass = [0.5] * fps_list
+    hihat = [0.5] * fps_list
 
     for effect_fn in VIDEO_EFFECTS:
         log(f"Generating preview: {effect_fn.__name__}")
-        frames = []
 
+        frames = []
         for i, frame in enumerate(subclip.iter_frames(fps=FPS)):
             t = i / FPS
-            processed = apply_video_effect(frame, t, beats, bass[i], hihat[i], effect_fn)
+            processed = apply_video_effect(
+                frame, t, beats, bass[i], hihat[i], effect_fn
+            )
             frames.append(processed)
 
         video = ImageSequenceClip(frames, fps=FPS)
@@ -118,18 +139,12 @@ def generate_effect_previews():
         video.write_videofile(out_path, fps=FPS, codec="libx264", audio=False)
 
 
-# -------------------------------------------------------
-# Generate multiple clips
-# -------------------------------------------------------
 def generate_multiple(count):
     for i in range(count):
         log(f"--- Generating clip {i+1}/{count} ---")
         generate_short()
 
 
-# -------------------------------------------------------
-# Command-line interface
-# -------------------------------------------------------
 if __name__ == "__main__":
     args = sys.argv[1:]
 
@@ -140,11 +155,7 @@ if __name__ == "__main__":
     if "--count" in args:
         idx = args.index("--count") + 1
         if idx < len(args):
-            try:
-                count = int(args[idx])
-            except:
-                log("ERROR: --count requires an integer")
-                sys.exit(1)
+            count = int(args[idx])
             generate_multiple(count)
             sys.exit(0)
         else:

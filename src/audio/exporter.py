@@ -1,16 +1,14 @@
 import soundfile as sf
-import os
+import tempfile
 
-def save_temp_audio(data):
+def save_temp_audio(audio_tuple):
     """
-    Saves processed audio to temp/temp_audio.wav and returns the path.
+    Saves processed audio to a temp WAV file.
+    Returns path to file.
     """
-    y, sr = data
+    audio, sr = audio_tuple
 
-    os.makedirs("temp", exist_ok=True)
-    path = "temp/temp_audio.wav"
-
-    sf.write(path, y, sr)
-
+    fd, path = tempfile.mkstemp(suffix=".wav", dir="temp")
+    sf.write(path, audio, sr)
     return path
 

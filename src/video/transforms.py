@@ -1,10 +1,19 @@
-import cv2
-
 def to_vertical_9_16(clip):
     """
-    Converts a MoviePy clip into vertical 9:16 format (1080x1920).
-    Video is resized by height and then center-cropped.
+    Converts a MoviePy clip to 1080x1920 (vertical 9:16).
+
+    Strategy:
+    - resize by height = 1920
+    - center-crop width to 1080
     """
+    # Resize so height = 1920
     clip = clip.resize(height=1920)
-    return clip.crop(width=1080, height=1920, x_center=clip.w // 2)
+
+    # Center crop width
+    return clip.crop(
+        width=1080,
+        height=1920,
+        x_center=clip.w / 2,
+        y_center=clip.h / 2
+    )
 

@@ -1,5 +1,9 @@
 input/music/*
+!input/music/.gitkeep
 input/videos/*
+!input/videos/.gitkeep
 output/*
+!output/.gitkeep
 temp/*
 venv/
+*__pycache__

@@ -1,368 +1,440 @@
-import cv2
 import numpy as np
-import random
-
-# ---------------------------------------
-# Helpers
-# ---------------------------------------
-
-def to_float(frame):
-    return frame.astype(np.float32) / 255.0
-
-def to_uint(frame):
-    return np.clip(frame * 255, 0, 255).astype(np.uint8)
+import cupy as cp
+import cv2
 
 
-# =======================================================
-# 🎨 COLOR EFFECTS
-# =======================================================
+# ---- GPU helpers ----
 
+def np_to_cp(arr):
+    """Convert NumPy -> CuPy."""
+    return cp.asarray(arr)
+
+
+def cp_to_np(arr):
+    """Convert CuPy -> NumPy."""
+    return cp.asnumpy(arr)
+
+
+def to_float_gpu(frame_gpu):
+    return frame_gpu.astype(cp.float32) / 255.0
+
+
+def to_uint_gpu(frame_gpu):
+    return cp.clip(frame_gpu * 255, 0, 255).astype(cp.uint8)
+
+
+# ======================================================================
+# ========================= GPU VIDEO EFFECTS ===========================
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# 1. HUE SHIFT (GPU)
+# ----------------------------------------------------------------------
 def hue_shift(frame, t, beats, bass, hihat):
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hsv[..., 0] = (hsv[..., 0] + t * 30) % 180
-    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    # Convert to HSV (CPU), but modify GPU-side for speed
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv_gpu = np_to_cp(hsv)
+
+    hsv_gpu[..., 0] = (hsv_gpu[..., 0] + t * 30) % 180
+
+    hsv_cpu = cp_to_np(hsv_gpu)
+    return cv2.cvtColor(hsv_cpu.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
 
+# ----------------------------------------------------------------------
+# 2. NEON PULSE (GPU)
+# ----------------------------------------------------------------------
 def neon_pulse(frame, t, beats, bass, hihat):
-    f = to_float(frame)
-    pulse = 0.5 + 0.5 * np.sin(t * 6 + bass * 5)
-    f = np.power(f * 1.6, 2.0) * pulse
-    return to_uint(f)
+    f = np_to_cp(frame).astype(cp.float32) / 255.0
+
+    pulse = 0.5 + 0.5 * cp.sin(t * 6 + bass * 5)
+    f = cp.power(f * 1.6, 2.0) * pulse
+
+    return cp_to_np(to_uint_gpu(f))
 
 
+# ----------------------------------------------------------------------
+# 3. SOLARIZE (GPU)
+# ----------------------------------------------------------------------
 def solarize(frame, t, beats, bass, hihat):
-    threshold = int(128 + 40 * np.sin(t * 4))
-    mask = frame > threshold
-    out = frame.copy()
-    out[mask] = 255 - out[mask]
-    return out
+    f = np_to_cp(frame)
+    threshold = int(128 + bass * 80)
+
+    mask = f > threshold
+    f[mask] = 255 - f[mask]
+
+    return cp_to_np(f)
 
 
-# =======================================================
-# ⚡ GLITCH EFFECTS
-# =======================================================
-
+# ----------------------------------------------------------------------
+# 4. RGB SPLIT (GPU)
+# ----------------------------------------------------------------------
 def rgb_split(frame, t, beats, bass, hihat):
-    b, g, r = cv2.split(frame)
-    shift = int(8 * np.sin(t * 5) + bass * 12)
-    r = np.roll(r, shift, axis=1)
-    b = np.roll(b, -shift, axis=0)
-    return cv2.merge([b, g, r])
+    f = np_to_cp(frame)
+    shift = int(5 + bass * 10)
+
+    b = f[..., 0]
+    g = cp.roll(f[..., 1], shift, axis=1)
+    r = cp.roll(f[..., 2], -shift, axis=1)
+
+    out = cp.stack([b, g, r], axis=-1)
+    return cp_to_np(out)
 
 
+# ----------------------------------------------------------------------
+# 5. BLOCK GLITCH (hybrid GPU/CPU)
+# ----------------------------------------------------------------------
 def block_glitch(frame, t, beats, bass, hihat):
+    f = frame.copy()
     h, w = frame.shape[:2]
-    out = frame.copy()
-    for _ in range(10 + int(10 * hihat)):
-        x = random.randint(0, w-1)
-        y = random.randint(0, h-1)
-        bw = random.randint(20, 80)
-        bh = random.randint(10, 40)
-        dx = random.randint(-15, 15)
-        block = frame[y:y+bh, x:x+bw]
-        out[y:y+bh, x+dx:x+dx+bw] = block
-    return out
+    block = 40
+    amount = int(3 + bass * 8)
+
+    for _ in range(amount):
+        y = np.random.randint(0, h - block)
+        x = np.random.randint(0, w - block)
+        dx = np.random.randint(-20, 20)
+        dy = np.random.randint(-20, 20)
+
+        y2 = np.clip(y+dy, 0, h-block)
+        x2 = np.clip(x+dx, 0, w-block)
+        f[y:y+block, x:x+block] = f[y2:y2+block, x2:x2+block]
+
+    return f
 
 
+# ----------------------------------------------------------------------
+# 6. SCANLINES (GPU)
+# ----------------------------------------------------------------------
 def scanlines(frame, t, beats, bass, hihat):
-    out = frame.copy()
-    for y in range(0, frame.shape[0], 3):
-        out[y] = (out[y] * 0.35).astype(np.uint8)
-    return out
+    f = np_to_cp(frame)
+    h = frame.shape[0]
+
+    mask = cp.zeros_like(f)
+    mask[::2] = 40
+
+    out = cp.clip(f - mask, 0, 255)
+    return cp_to_np(out.astype(cp.uint8))
 
 
-# =======================================================
-# 🌀 DISTORTION EFFECTS
-# =======================================================
-
+# ----------------------------------------------------------------------
+# 7. SWIRL (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def swirl(frame, t, beats, bass, hihat):
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
-    cx, cy = w//2, h//2
 
-    y, x = np.indices((h, w))
+    y, x = cp.indices((h, w))
+    cx, cy = w // 2, h // 2
+
     x = x - cx
     y = y - cy
 
-    radius = np.sqrt(x*x + y*y)
-    angle = np.arctan2(y, x) + (radius / 300) * 2
+    radius = cp.sqrt(x*x + y*y)
+    angle = cp.arctan2(y, x) + (radius / 300) * 2
 
-    map_x = (cx + radius * np.cos(angle)).astype(np.float32)
-    map_y = (cy + radius * np.sin(angle)).astype(np.float32)
+    map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
+    map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
 
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    # CPU remap
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
 
+# ----------------------------------------------------------------------
+# 8. WAVE (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def wave(frame, t, beats, bass, hihat):
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
-    X, Y = np.meshgrid(np.arange(w), np.arange(h))
-    Y2 = Y + 15 * np.sin(2*np.pi*(X/150 + t))
-    return frame[Y2.clip(0, h-1).astype(int), X]
+
+    y, x = cp.indices((h, w))
+    wave_x = x + cp.sin(y / 20 + t * 5) * 10
+    wave_y = y + cp.sin(x / 30 + t * 4) * 10
+
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(wave_x.astype(cp.float32)),
+        cp_to_np(wave_y.astype(cp.float32)),
+        cv2.INTER_LINEAR
+    )
 
 
+# ----------------------------------------------------------------------
+# 9. RIPPLE (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def ripple(frame, t, beats, bass, hihat):
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
-    cx, cy = w//2, h//2
+    cx, cy = w // 2, h // 2
 
-    y, x = np.indices((h, w))
+    y, x = cp.indices((h, w))
     dx = x - cx
     dy = y - cy
-    r = np.sqrt(dx*dx + dy*dy)
+    r = cp.sqrt(dx*dx + dy*dy)
 
-    ripple = np.sin(r/6 - t*10) * 5
+    ripple = cp.sin(r/6 - t*10) * 5
 
-    map_x = (x + ripple).astype(np.float32)
-    map_y = (y + ripple).astype(np.float32)
+    map_x = (x + ripple).astype(cp.float32)
+    map_y = (y + ripple).astype(cp.float32)
 
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
 
-# =======================================================
-# ✴️ KALEIDOSCOPES & MANDALAS
-# =======================================================
-
-def kaleidoscope(frame, t, beats, bass, hihat, segments=6):
+# ----------------------------------------------------------------------
+# 10. KALEIDOSCOPE (GPU + CPU remap)
+# ----------------------------------------------------------------------
+def kaleidoscope(frame, t, beats, bass, hihat):
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
-    cx, cy = w//2, h//2
 
-    y, x = np.indices((h, w))
+    y, x = cp.indices((h, w))
+    cx, cy = w // 2, h // 2
+
     dx = x - cx
     dy = y - cy
+    angle = cp.arctan2(dy, dx)
+    radius = cp.sqrt(dx*dx + dy*dy)
 
-    angle = np.arctan2(dy, dx)
-    radius = np.sqrt(dx*dx + dy*dy)
+    angle = (angle + cp.pi) % (cp.pi/3)
+    angle = angle - cp.pi
 
-    angle = (angle % (2*np.pi / segments)) * segments
+    map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
+    map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
 
-    map_x = (cx + radius * np.cos(angle)).astype(np.float32)
-    map_y = (cy + radius * np.sin(angle)).astype(np.float32)
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
 
-
+# ----------------------------------------------------------------------
+# 11. MANDALA TWIST (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def mandala_twist(frame, t, beats, bass, hihat):
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
-    cx, cy = w//2, h//2
 
-    y, x = np.indices((h, w))
+    y, x = cp.indices((h, w))
+    cx, cy = w // 2, h // 2
+
     dx = x - cx
     dy = y - cy
-    r = np.sqrt(dx*dx + dy*dy)
+    radius = cp.sqrt(dx*dx + dy*dy)
 
-    angle = np.arctan2(dy, dx) + np.sin(r/50 + t*5) * 2
+    angle = cp.arctan2(dy, dx) + cp.sin(t*3 + radius/50) * 0.5
 
-    map_x = (cx + r * np.cos(angle)).astype(np.float32)
-    map_y = (cy + r * np.sin(angle)).astype(np.float32)
+    map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
+    map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
 
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
 
-# =======================================================
-# 📊 PIXEL SORTING
-# =======================================================
-
+# ----------------------------------------------------------------------
+# 12. PIXEL SORT (GPU)
+# ----------------------------------------------------------------------
 def pixel_sort(frame, t, beats, bass, hihat):
-    out = frame.copy()
-    for y in range(frame.shape[0]):
-        row = frame[y]
+    f = np_to_cp(frame)
+    h, w = frame.shape[:2]
+
+    out = f.copy()
+
+    for y in range(h):
+        row = out[y]
         lum = row.mean(axis=1)
-        idx = np.argsort(lum)
+        idx = cp.argsort(lum)
         out[y] = row[idx]
-    return out
+
+    return cp_to_np(out)
 
 
+# ----------------------------------------------------------------------
+# 13. PIXEL SORT VERTICAL (GPU)
+# ----------------------------------------------------------------------
 def pixel_sort_vertical(frame, t, beats, bass, hihat):
-    f = frame.transpose((1,0,2))
-    out = pixel_sort(f, t, beats, bass, hihat)
-    return out.transpose((1,0,2))
+    f = np_to_cp(frame)
+    h, w = frame.shape[:2]
+
+    out = f.copy()
+
+    for x in range(w):
+        col = out[:, x]
+        lum = col.mean(axis=1)
+        idx = cp.argsort(lum)
+        out[:, x] = col[idx]
+
+    return cp_to_np(out)
 
 
-# =======================================================
-# 🎧 BEAT-REACTIVE EFFECTS
-# =======================================================
-
+# ----------------------------------------------------------------------
+# 14. BEAT GLOW (GPU)
+# ----------------------------------------------------------------------
 def beat_glow(frame, t, beats, bass, hihat):
-    if len(beats) == 0:
-        dist = 1
-    else:
-        dist = np.min(np.abs(beats - t))
-
-    pulse = np.exp(-dist * 15)  # sharp beat glow
-    f = frame.astype(np.float32)
-    f *= (1.0 + pulse * 2.2)
-    return np.clip(f, 0, 255).astype(np.uint8)
+    f = np_to_cp(frame).astype(cp.float32) / 255.0
+    power = 1.0 + bass * 1.5
+    out = cp.power(f, power)
+    return cp_to_np(to_uint_gpu(out))
 
 
+# ----------------------------------------------------------------------
+# 15. BEAT RGB SHAKE (GPU)
+# ----------------------------------------------------------------------
 def beat_rgb_shake(frame, t, beats, bass, hihat):
-    if len(beats) == 0:
-        dist = 1
-    else:
-        dist = np.min(np.abs(beats - t))
+    shift = int(hihat * 10)
 
-    amount = max(0, 12 - dist * 120)
-    b, g, r = cv2.split(frame)
-    r = np.roll(r, int(amount), axis=1)
-    b = np.roll(b, -int(amount), axis=0)
-    return cv2.merge([b, g, r])
+    f = np_to_cp(frame)
+
+    b = cp.roll(f[..., 0], shift, axis=0)
+    g = cp.roll(f[..., 1], -shift, axis=1)
+    r = f[..., 2]
+
+    return cp_to_np(cp.stack([b, g, r], axis=-1))
 
 
+# ----------------------------------------------------------------------
+# 16. BEAT ZOOM (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def beat_zoom(frame, t, beats, bass, hihat):
-    if len(beats) == 0:
-        return frame
-
-    dist = np.min(np.abs(beats - t))
-    strength = max(0, 1.2 - dist * 10)
-
-    if strength <= 0.01:
-        return frame
+    scale = 1.0 + bass * 0.1
 
     h, w = frame.shape[:2]
-    scale = 1 + strength * 0.3
+    new_w = int(w * scale)
+    new_h = int(h * scale)
 
-    nh, nw = int(h / scale), int(w / scale)
-    y1, x1 = (h - nh)//2, (w - nw)//2
-    cropped = frame[y1:y1+nh, x1:x1+nw]
-    return cv2.resize(cropped, (w, h))
+    resized = cv2.resize(frame, (new_w, new_h))
+
+    x = (new_w - w) // 2
+    y = (new_h - h) // 2
+
+    cropped = resized[y:y+h, x:x+w]
+    return cropped
 
 
+# ----------------------------------------------------------------------
+# 17. BEAT KALEIDO PULSE (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def beat_kaleido_pulse(frame, t, beats, bass, hihat):
-    if len(beats) == 0:
-        return kaleidoscope(frame, t, beats, bass, hihat, 6)
+    intensity = 1 + bass * 2
+    f_gpu = np_to_cp(frame)
 
-    dist = np.min(np.abs(beats - t))
-    seg = 6 + int(np.exp(-dist * 20) * 10)
-    return kaleidoscope(frame, t, beats, bass, hihat, seg)
+    h, w = frame.shape[:2]
+    y, x = cp.indices((h, w))
+    cx, cy = w//2, h//2
+
+    dx = x - cx
+    dy = y - cy
+    radius = cp.sqrt(dx*dx + dy*dy)
+
+    angle = cp.arctan2(dy, dx)
+    angle = (angle * intensity) % (cp.pi/4)
+
+    map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
+    map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
+
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
 
+# ----------------------------------------------------------------------
+# 18. BEAT RIPPLE (GPU + CPU remap)
+# ----------------------------------------------------------------------
 def beat_ripple(frame, t, beats, bass, hihat):
-    if len(beats) == 0:
-        dist = 1
-    else:
-        dist = np.min(np.abs(beats - t))
-
-    amp = 20 * np.exp(-dist * 15)
-
+    f_gpu = np_to_cp(frame)
     h, w = frame.shape[:2]
     cx, cy = w//2, h//2
 
-    y, x = np.indices((h, w))
+    y, x = cp.indices((h, w))
     dx = x - cx
     dy = y - cy
-    r = np.sqrt(dx*dx + dy*dy)
+    r = cp.sqrt(dx*dx + dy*dy)
 
-    ripple = np.sin(r/8 - t*10) * amp
+    ripple = cp.sin(r/10 - t*20) * bass * 20
 
-    map_x = (x + ripple).astype(np.float32)
-    map_y = (y + ripple).astype(np.float32)
+    map_x = (x + ripple).astype(cp.float32)
+    map_y = (y + ripple).astype(cp.float32)
 
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return cv2.remap(
+        cp_to_np(f_gpu),
+        cp_to_np(map_x),
+        cp_to_np(map_y),
+        cv2.INTER_LINEAR
+    )
 
 
-# =======================================================
-# 🎚 BASS-REACTIVE EFFECTS
-# =======================================================
-
+# ----------------------------------------------------------------------
+# 19. BASS ZOOM (CPU)
+# ----------------------------------------------------------------------
 def bass_zoom(frame, t, beats, bass, hihat):
-    strength = bass * 0.5
-    if strength < 0.01:
-        return frame
+    scale = 1.0 + bass * 0.3
 
     h, w = frame.shape[:2]
-    scale = 1 + strength
+    new_w = int(w * scale)
+    new_h = int(h * scale)
 
-    nh, nw = int(h / scale), int(w / scale)
-    y1, x1 = (h - nh)//2, (w - nw)//2
-    crop = frame[y1:y1+nh, x1:x1+nw]
-    return cv2.resize(crop, (w, h))
+    resized = cv2.resize(frame, (new_w, new_h))
+    x = (new_w - w) // 2
+    y = (new_h - h) // 2
+
+    return resized[y:y+h, x:x+w]
 
 
+# ----------------------------------------------------------------------
+# 20. BASS DISTORT (GPU)
+# ----------------------------------------------------------------------
 def bass_distort(frame, t, beats, bass, hihat):
-    h, w = frame.shape[:2]
-    cx, cy = w//2, h//2
+    f = np_to_cp(frame).astype(cp.float32) / 255.0
 
-    y, x = np.indices((h, w))
-    dx = x - cx
-    dy = y - cy
-    r = np.sqrt(dx*dx + dy*dy)
+    noise = cp.random.uniform(-1, 1, frame.shape, dtype=cp.float32)
+    distorted = cp.clip(f + noise * (bass * 0.2), 0, 1)
 
-    distort = np.sin(r / 8 + t * 10) * bass * 30
-
-    map_x = (x + distort).astype(np.float32)
-    map_y = (y + distort).astype(np.float32)
-
-    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+    return cp_to_np(to_uint_gpu(distorted))
 
 
-# =======================================================
-# 🥁 HIHAT-REACTIVE EFFECTS
-# =======================================================
-
-def hihat_flash(frame, t, beats, bass, hihat):
-    if hihat < 0.2:
-        return frame
-    f = frame.astype(np.float32)
-    f *= (1 + hihat * 2.5)
-    return np.clip(f, 0, 255).astype(np.uint8)
-
-
-def hihat_glitch(frame, t, beats, bass, hihat):
-    if hihat < 0.15:
-        return frame
-
-    h, w = frame.shape[:2]
-    out = frame.copy()
-
-    glitch_amount = int(hihat * 20)
-
-    for _ in range(glitch_amount):
-        y = random.randint(0, h-3)
-        band = frame[y:y+2]
-        shift = random.randint(-10, 10)
-        out[y:y+2] = np.roll(band, shift, axis=1)
-
-    return out
-
-
-# =======================================================
-# MASTER LIST OF ALL EFFECTS
-# =======================================================
+# ======================================================================
+# EFFECT LIST
+# ======================================================================
 
 VIDEO_EFFECTS = [
-    # Color FX
     hue_shift,
     neon_pulse,
     solarize,
-
-    # Glitch FX
     rgb_split,
     block_glitch,
     scanlines,
-
-    # Distort FX
     swirl,
     wave,
     ripple,
-
-    # Kaleidoscope / Mandala
     kaleidoscope,
     mandala_twist,
-
-    # Pixel Sorting
     pixel_sort,
     pixel_sort_vertical,
-
-    # Beat-reactive
     beat_glow,
     beat_rgb_shake,
     beat_zoom,
     beat_kaleido_pulse,
     beat_ripple,
-
-    # Bass-reactive
     bass_zoom,
     bass_distort,
-
-    # Hihat-reactive
-    hihat_flash,
-    hihat_glitch,
 ]
 
