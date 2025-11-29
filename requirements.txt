@@ -1,0 +1,6 @@
+moviepy
+opencv-python
+numpy
+librosa
+soundfile
+pedalboard
