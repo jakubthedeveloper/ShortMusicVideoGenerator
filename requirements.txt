@@ -5,3 +5,4 @@ librosa
 soundfile
 pedalboard
 cupy-cuda12x
+mutagen

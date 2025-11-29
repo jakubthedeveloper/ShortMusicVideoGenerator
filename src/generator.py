@@ -2,6 +2,7 @@ import os
 import random
 import sys
 import argparse
+from utils.title_utils import generate_title_from_audio
 
 from moviepy import (
     VideoFileClip,
@@ -33,6 +34,9 @@ def generate_short():
 
     log(f"Selected video: {video_path}")
     log(f"Selected audio: {music_path}")
+
+    title = generate_title_from_audio(music_path)
+    print(f"[★] Generated title: {title}")
 
     # -----------------------------
     # LOAD VIDEO
@@ -95,7 +99,11 @@ def generate_short():
     # -----------------------------
     os.makedirs("output", exist_ok=True)
 
-    out_path = f"output/short_{random.randint(1000,9999)}.mp4"
+    output_name = f"{title}"
+
+#    out_path = f"output/short_{random.randint(1000,9999)}.mp4"
+    out_path = f"output/{output_name} - short.mp4"
+
     log(f"Exporting: {out_path}")
 
     video.write_videofile(
