@@ -35,7 +35,7 @@ def hue_shift(frame, t, beats, bass, hihat):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     hsv_gpu = np_to_cp(hsv)
 
-    hsv_gpu[..., 0] = (hsv_gpu[..., 0] + t * 30) % 180
+    hsv_gpu[..., 0] = (hsv_gpu[..., 0] + t * 8) % 180
 
     hsv_cpu = cp_to_np(hsv_gpu)
     return cv2.cvtColor(hsv_cpu.astype(np.uint8), cv2.COLOR_HSV2BGR)
@@ -131,7 +131,7 @@ def swirl(frame, t, beats, bass, hihat):
     y = y - cy
 
     radius = cp.sqrt(x*x + y*y)
-    angle = cp.arctan2(y, x) + (radius / 300) * 2
+    angle = cp.arctan2(y, x) + (radius / 300) * 0.6
 
     map_x = (cx + radius * cp.cos(angle)).astype(cp.float32)
     map_y = (cy + radius * cp.sin(angle)).astype(cp.float32)
@@ -450,7 +450,7 @@ def beat_zoom(frame, t, beats, bass, hihat):
 # 17. BEAT KALEIDO PULSE (GPU + CPU remap)
 # ----------------------------------------------------------------------
 def beat_kaleido_pulse(frame, t, beats, bass, hihat):
-    intensity = 1 + bass * 2
+    intensity = 1 + bass * 0.6
     f_gpu = np_to_cp(frame)
 
     h, w = frame.shape[:2]

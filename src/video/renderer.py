@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from config.settings import EFFECT_SPEED, EFFECT_INTENSITY
 
 def apply_video_effect(frame, t, beats, bass, hihat, effect_fn):
     """
@@ -20,7 +21,11 @@ def apply_video_effect(frame, t, beats, bass, hihat, effect_fn):
     Returns:
         np.ndarray: RGB frame after processing
     """
-
+    
+    t *= EFFECT_SPEED
+    bass *= EFFECT_INTENSITY
+    hihat *= EFFECT_INTENSITY
+    
     # Convert RGB → BGR for OpenCV
     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 

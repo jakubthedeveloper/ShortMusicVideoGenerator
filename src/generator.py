@@ -25,6 +25,9 @@ from audio.exporter import save_temp_audio
 
 from config.settings import CLIP_MIN_DURATION, CLIP_MAX_DURATION, FPS
 
+SMOOTH_BASS = 0.1   # lower = more smooth (0.05–0.3)
+SMOOTH_HIHAT = 0.15
+
 def generate_short():
     # -----------------------------
     # SELECT INPUTS
@@ -88,11 +91,14 @@ def generate_short():
     for i, frame in enumerate(subclip.iter_frames(fps=FPS)):
         t = i / FPS
 
-        bass = bass_energy[min(i, len(bass_energy)-1)]
-        hihat = hihat_energy[min(i, len(hihat_energy)-1)]
-
-#        processed = apply_video_effect(frame, t, beats, bass, hihat, effect_fn)
-        processed = apply_video_effect(frame, t, beats, bass, hihat, chain)
+        if i == 0:
+            bass_s = bass_energy[0]
+            hihat_s = hihat_energy[0]
+        else:
+            bass_s = bass_s * (1 - SMOOTH_BASS) + bass_energy[i] * SMOOTH_BASS
+            hihat_s = hihat_s * (1 - SMOOTH_HIHAT) + hihat_energy[i] * SMOOTH_HIHAT
+    
+        processed = apply_video_effect(frame, t, beats, bass_s, hihat_s, chain)
 
         frames.append(processed)
 
