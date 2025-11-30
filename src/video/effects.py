@@ -22,6 +22,26 @@ def to_uint_gpu(frame_gpu):
     return cp.clip(frame_gpu * 255, 0, 255).astype(cp.uint8)
 
 
+def ensure_rgb(arr):
+    """
+    Ensures output is always (H, W, 3).
+    Fixes GPU kaleidoscope outputs that may return 1-channel or 4-channel results.
+    """
+    if arr.ndim == 2:
+        # grayscale -> RGB
+        return np.stack([arr, arr, arr], axis=-1)
+
+    if arr.shape[2] == 1:
+        # (H,W,1) -> (H,W,3)
+        return np.repeat(arr, 3, axis=2)
+
+    if arr.shape[2] == 4:
+        # (H,W,4) -> discard alpha / extra channel
+        return arr[..., :3]
+
+    return arr
+
+
 # ======================================================================
 # ========================= GPU VIDEO EFFECTS ===========================
 # ======================================================================
@@ -334,10 +354,19 @@ def kaleidoscope_3d_auto(frame, t, beats, bass, hihat):
 
 
 def kaleidoscope_fractal_auto(frame, t, beats, bass, hihat):
+    """
+    Safe wrapper for CUDA or CPU fractal kaleidoscope.
+    Ensures correct channel dimensions even if CUDA kernel returns 1 or 4 channels.
+    """
     if USE_KALEIDOSCOPE_CUDA:
-        return kaleidoscope_fractal_cuda(frame, t, beats, bass, hihat)
-    return kaleidoscope_fractal(frame, t, beats, bass, hihat)
+        try:
+            out = kaleidoscope_fractal_cuda(frame, t, beats, bass, hihat)
+            return ensure_rgb(out)     # <-- FIXED
+        except Exception as e:
+            print("[WARNING] CUDA fractal failed, falling back to CPU:", e)
 
+    out = kaleidoscope_fractal(frame, t, beats, bass, hihat)
+    return ensure_rgb(out)
 
 # ----------------------------------------------------------------------
 # 11. MANDALA TWIST (GPU + CPU remap)
